@@ -1,212 +1,373 @@
 import copy
-
 import chess
 
 STARTING_PIECES = {
     "a1": "wR", "b1": "wN", "c1": "wB", "d1": "wQ",
     "e1": "wK", "f1": "wB", "g1": "wN", "h1": "wR",
+
     "a2": "wP", "b2": "wP", "c2": "wP", "d2": "wP",
     "e2": "wP", "f2": "wP", "g2": "wP", "h2": "wP",
+
     "a7": "bP", "b7": "bP", "c7": "bP", "d7": "bP",
     "e7": "bP", "f7": "bP", "g7": "bP", "h7": "bP",
+
     "a8": "bR", "b8": "bN", "c8": "bB", "d8": "bQ",
     "e8": "bK", "f8": "bB", "g8": "bN", "h8": "bR",
 }
 
+CASTLING_MAP = {
+    frozenset(("e1", "h1", "f1", "g1")): "e1g1",
+    frozenset(("e1", "a1", "d1", "c1")): "e1c1",
+    frozenset(("e8", "h8", "f8", "g8")): "e8g8",
+    frozenset(("e8", "a8", "d8", "c8")): "e8c8",
+}
+
+
 def count_pieces(board_snapshot):
     white = black = 0
+
     for data in board_snapshot.values():
         state = data["state"]
+
         if state == "white":
             white += 1
+
         elif state == "black":
             black += 1
+
     return white, black
 
-def capture_hint_from_counts(old_white, old_black, new_white, new_black):
-    if new_white == old_white and new_black == old_black - 1:
-        return "white_captured_black"
-    if new_white == old_white - 1 and new_black == old_black:
-        return "black_captured_white"
-    return None
 
 class LogicEngine:
 
     def __init__(self, debug=False):
+
         self.board = chess.Board()
+
         self.piece_map = STARTING_PIECES.copy()
+
         self.last_board = None
+
         self.last_white = 0
         self.last_black = 0
+
         self.game_started = False
+
         self.debug = debug
 
     def _log(self, *args):
+
         if self.debug:
             print(*args)
 
     def start_game(self, board_snapshot):
-        self.board = chess.Board()
-        self.piece_map = STARTING_PIECES.copy()
-        self.last_board = copy.deepcopy(board_snapshot)
-        self.last_white, self.last_black = count_pieces(board_snapshot)
-        self.game_started = True
 
-        total = self.last_white + self.last_black
-        if total != 32:
-            print(
-                f"[WARN] Expected 32 pieces, vision sees {total} "
-                f"(white={self.last_white}, black={self.last_black})"
-            )
+        self.board = chess.Board()
+
+        self.piece_map = STARTING_PIECES.copy()
+
+        self.last_board = copy.deepcopy(board_snapshot)
+
+        self.last_white, self.last_black = count_pieces(
+            board_snapshot
+        )
+
+        self.game_started = True
 
         print("[INFO] Game started")
 
     def get_changed_squares(self, old_board, new_board):
+
         changed = []
+
         for sq in old_board:
-            if old_board[sq]["state"] != new_board[sq]["state"]:
+
+            if (
+                old_board[sq]["state"]
+                !=
+                new_board[sq]["state"]
+            ):
                 changed.append(sq)
+
         return changed
 
-    def _infer_from_to(self, changed, old_board, new_board, capture_hint):
-        from_sq = None
-        to_sq = None
-        capture_candidates = []
+    def classify_changes(
+        self,
+        old_board,
+        new_board,
+        changed
+    ):
+
+        became_empty = []
+        became_occupied = []
+        color_changed = []
 
         for sq in changed:
+
             old_state = old_board[sq]["state"]
             new_state = new_board[sq]["state"]
-            self._log(sq, old_state, "->", new_state)
 
-            if old_state != "empty" and new_state == "empty":
-                from_sq = sq
-            elif old_state == "empty" and new_state != "empty":
-                to_sq = sq
+            if (
+                old_state != "empty"
+                and
+                new_state == "empty"
+            ):
+                became_empty.append(sq)
+
+            elif (
+                old_state == "empty"
+                and
+                new_state != "empty"
+            ):
+                became_occupied.append(sq)
+
             elif (
                 old_state != "empty"
-                and new_state != "empty"
-                and old_state != new_state
+                and
+                new_state != "empty"
+                and
+                old_state != new_state
             ):
-                capture_candidates.append(sq)
+                color_changed.append(sq)
 
-        if to_sq is None and capture_candidates:
-            if capture_hint == "white_captured_black":
-                for sq in capture_candidates:
-                    if old_board[sq]["state"] == "black":
-                        to_sq = sq
-                        break
-            elif capture_hint == "black_captured_white":
-                for sq in capture_candidates:
-                    if old_board[sq]["state"] == "white":
-                        to_sq = sq
-                        break
-            if to_sq is None:
-                to_sq = capture_candidates[0]
+        return (
+            became_empty,
+            became_occupied,
+            color_changed
+        )
 
-        return from_sq, to_sq
+    def update_piece_map(
+        self,
+        move,
+        move_type,
+        from_sq=None,
+        to_sq=None,
+        captured_sq=None,
+    ):
 
-    def _match_legal_move(self, changed, old_board, new_board, capture_hint):
-        changed_set = set(changed)
-        matches = []
+        if move_type == "castle":
 
-        for move in self.board.legal_moves:
-            from_sq = chess.square_name(move.from_square)
-            to_sq = chess.square_name(move.to_square)
+            if move.uci() == "e1g1":
 
-            if from_sq not in changed_set or to_sq not in changed_set:
-                continue
+                self.piece_map["g1"] = self.piece_map.pop("e1")
+                self.piece_map["f1"] = self.piece_map.pop("h1")
 
-            old_from = old_board[from_sq]["state"]
-            new_from = new_board[from_sq]["state"]
-            old_to = old_board[to_sq]["state"]
-            new_to = new_board[to_sq]["state"]
+            elif move.uci() == "e1c1":
 
-            if old_from == "empty" or new_from != "empty":
-                continue
-            if new_to == "empty":
-                continue
+                self.piece_map["c1"] = self.piece_map.pop("e1")
+                self.piece_map["d1"] = self.piece_map.pop("a1")
 
-            if self.board.is_capture(move):
-                if old_to == "empty" or old_to == new_to:
-                    continue
-            elif old_to != "empty":
-                continue
+            elif move.uci() == "e8g8":
 
-            if capture_hint == "white_captured_black" and not self.board.is_capture(move):
-                continue
-            if capture_hint == "black_captured_white" and not self.board.is_capture(move):
-                continue
+                self.piece_map["g8"] = self.piece_map.pop("e8")
+                self.piece_map["f8"] = self.piece_map.pop("h8")
 
-            matches.append(move)
+            elif move.uci() == "e8c8":
 
-        if len(matches) == 1:
-            return matches[0]
-        return None
+                self.piece_map["c8"] = self.piece_map.pop("e8")
+                self.piece_map["d8"] = self.piece_map.pop("a8")
+
+            return
+
+        moving_piece = self.piece_map.pop(from_sq)
+
+        if move_type == "en_passant":
+            self.piece_map.pop(captured_sq, None)
+
+        else:
+            self.piece_map.pop(to_sq, None)
+
+        if move.promotion:
+
+            if moving_piece.startswith("w"):
+                self.piece_map[to_sq] = "wQ"
+            else:
+                self.piece_map[to_sq] = "bQ"
+
+        else:
+            self.piece_map[to_sq] = moving_piece
 
     def process_move(self, current_board):
+
         if not self.game_started:
+
             print("[ERROR] Start game first")
             return False
 
         current_board = copy.deepcopy(current_board)
-        changed = self.get_changed_squares(self.last_board, current_board)
 
-        self._log("\nChanged squares:", sorted(changed))
+        changed = self.get_changed_squares(
+            self.last_board,
+            current_board
+        )
 
         if len(changed) < 2:
+
             print("[ERROR] No move detected")
             return False
 
-        new_white, new_black = count_pieces(current_board)
-        capture_hint = capture_hint_from_counts(
-            self.last_white, self.last_black, new_white, new_black
-        )
-        if capture_hint:
-            self._log("[INFO] Capture hint:", capture_hint)
-
-        from_sq, to_sq = self._infer_from_to(
-            changed, self.last_board, current_board, capture_hint
-        )
+        self._log("Changed:", sorted(changed))
 
         move = None
-        if from_sq and to_sq:
-            candidate = chess.Move.from_uci(from_sq + to_sq)
-            if candidate in self.board.legal_moves:
-                move = candidate
+        move_type = None
 
-        if move is None:
-            move = self._match_legal_move(
-                changed, self.last_board, current_board, capture_hint
+        from_sq = None
+        to_sq = None
+        captured_sq = None
+
+        (
+            became_empty,
+            became_occupied,
+            color_changed
+        ) = self.classify_changes(
+            self.last_board,
+            current_board,
+            changed
+        )
+
+        #
+        # CASTLING
+        #
+        if len(changed) == 4:
+
+            uci = CASTLING_MAP.get(
+                frozenset(changed)
             )
 
-        if move is None:
-            self._log("FROM:", from_sq, "TO:", to_sq)
-            print("[ERROR] Could not determine move")
+            if uci:
+
+                move = chess.Move.from_uci(uci)
+                move_type = "castle"
+
+        #
+        # EN PASSANT
+        #
+        elif (
+            len(became_empty) == 2
+            and
+            len(became_occupied) == 1
+        ):
+
+            moving_color = (
+                "w"
+                if self.board.turn == chess.WHITE
+                else "b"
+            )
+
+            for sq in became_empty:
+
+                piece = self.piece_map.get(sq)
+
+                if (
+                    piece
+                    and
+                    piece.startswith(moving_color)
+                ):
+                    from_sq = sq
+                else:
+                    captured_sq = sq
+
+            to_sq = became_occupied[0]
+
+            move = chess.Move.from_uci(
+                from_sq + to_sq
+            )
+
+            move_type = "en_passant"
+
+        #
+        # NORMAL MOVE
+        #
+        elif (
+            len(became_empty) == 1
+            and
+            len(became_occupied) == 1
+        ):
+
+            from_sq = became_empty[0]
+            to_sq = became_occupied[0]
+
+        #
+        # CAPTURE
+        #
+        elif (
+            len(became_empty) == 1
+            and
+            len(color_changed) == 1
+        ):
+
+            from_sq = became_empty[0]
+            to_sq = color_changed[0]
+
+        else:
+
+            print("[ERROR] Unknown move pattern")
             return False
 
+        #
+        # build move
+        #
+        if move is None:
+
+            moving_piece = self.piece_map.get(from_sq)
+
+            promotion = (
+                moving_piece == "wP"
+                and to_sq.endswith("8")
+            ) or (
+                moving_piece == "bP"
+                and to_sq.endswith("1")
+            )
+
+            if promotion:
+
+                move = chess.Move.from_uci(
+                    from_sq + to_sq + "q"
+                )
+
+            else:
+
+                move = chess.Move.from_uci(
+                    from_sq + to_sq
+                )
+
+            if move_type is None:
+
+                if len(color_changed):
+                    move_type = "capture"
+                else:
+                    move_type = "normal"
+
+        #
+        # legality check
+        #
         if move not in self.board.legal_moves:
+
             print(
                 "[ILLEGAL]",
-                chess.square_name(move.from_square),
-                "->",
-                chess.square_name(move.to_square),
+                move.uci()
             )
+
             return False
 
         san = self.board.san(move)
-        from_sq = chess.square_name(move.from_square)
-        to_sq = chess.square_name(move.to_square)
 
-        if from_sq in self.piece_map:
-            moving_piece = self.piece_map[from_sq]
-            if to_sq in self.piece_map:
-                del self.piece_map[to_sq]
-            self.piece_map[to_sq] = moving_piece
-            del self.piece_map[from_sq]
+        self.update_piece_map(
+            move,
+            move_type,
+            from_sq,
+            to_sq,
+            captured_sq,
+        )
 
         self.board.push(move)
+
         self.last_board = current_board
-        self.last_white, self.last_black = new_white, new_black
+
+        self.last_white, self.last_black = count_pieces(
+            current_board
+        )
 
         print("[MOVE]", san)
+
         return san
