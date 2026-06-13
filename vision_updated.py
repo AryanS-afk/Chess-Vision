@@ -7,6 +7,8 @@ from occupancy_colour_ml import (
     OccupancyColourModel
 )
 from logic import LogicEngine
+from digital_board import DigitalBoard
+
 
 CAMERA_INDEX = 1
 BOARD_SIZE = 800
@@ -212,6 +214,8 @@ def main():
     )
 
     logic = LogicEngine()
+    gui = DigitalBoard()
+    gui.update_board(logic.piece_map)
 
     while True:
 
@@ -289,32 +293,33 @@ def main():
         elif key == ord(" "):
 
             if warped is not None:
+
                 board = vision.occupancy_map(
-
                     warped,
-
                     model
-
                 )
 
-                logic.process_move(
+                san = logic.process_move(board)
 
-                    board
+                if san:
+                    print(san)
+                    gui.update_board(logic.piece_map)
 
-                )
 
         elif key == ord("S"):
 
             if warped is not None:
+
                 board = vision.occupancy_map(
                     warped,
                     model
                 )
 
-                logic.start_game(
-                    board
-                )
+                logic.start_game(board)
 
+                gui.update_board(logic.piece_map)
+
+                print("Game started")
         elif key == ord("q"):
             break
 
