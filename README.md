@@ -1,6 +1,10 @@
 # Chess-Vision
 
-Real-time computer vision for a **physical chess board**. A webcam tracks the board with ArUco markers, warps the image to a top-down view, and uses a TensorFlow Lite model to classify each square as empty, occupied by a white piece, or occupied by a black piece. Move detection is layered on top with [python-chess](https://python-chess.readthedocs.io/) so legal moves are validated and printed in standard algebraic notation (SAN).
+Play chess on a real board and let your webcam keep score.
+
+Chess-Vision watches a physical chess set through a camera. Four ArUco markers on the corners tell it where the board is; the feed gets warped to a top-down view, and a small TensorFlow Lite model classifies each square as empty, white, or black. When you make a move and hit Space, the app figures out what changed, checks it against [python-chess](https://python-chess.readthedocs.io/), and prints the result in standard algebraic notation.
+
+Alongside the camera feed, a **digital board** window shows the game state with piece images — handy when you want to double-check what the system thinks is on the board without squinting at the warped view.
 
 ## How it works
 
@@ -11,107 +15,120 @@ flowchart LR
     Warp --> Split[64 square crops]
     Split --> ML[TFLite classifier]
     ML --> Logic[LogicEngine / python-chess]
+    Logic --> GUI[Digital board]
 ```
 
-1. **Board localization** — Four ArUco markers (`DICT_4X4_50`, IDs `0`–`3`) define the board corners. Their inner corners are used to compute a homography and warp the feed to an 800×800 board image.
-2. **Square classification** — Each of the 64 squares is resized and passed through `model.tflite`, which outputs one of: `empty`, `black`, or `white` (see `labels.txt`).
-3. **Move inference** — After you start a game, pressing **Space** compares the current board snapshot to the previous one, infers `from` / `to` squares from occupancy changes, and pushes the move if it is legal.
+1. **Find the board** — Four ArUco markers (`DICT_4X4_50`, IDs `0`–`3`) sit on the corners. Their inner corners define a homography that warps the camera feed into an 800×800 board image.
+2. **Read each square** — All 64 squares are cropped, resized, and run through `model.tflite`, which labels them `empty`, `black`, or `white` (see `labels.txt`).
+3. **Detect moves** — Once a game is started, Space compares the current snapshot to the last one, guesses the from/to squares from occupancy changes, and accepts the move if it's legal.
+4. **Update the digital board** — After you start a game or register a move, a Tkinter window redraws the position using PNG piece images from `chesspics/`.
 
-Calibration corners are saved to `calibration.json` so you can reload them on the next run.
+Corner positions are saved to `calibration.json` when you freeze tracking, so you don't have to recalibrate every session.
 
-## Requirements
+## What you need
 
-- Python 3.10+ (tested with 3.12)
+- Python 3.10+ (tested on 3.12)
 - A webcam
-- A physical board with four ArUco markers placed at the corners (dictionary `4x4_50`, marker IDs `0`–`3`)
+- A physical board with four ArUco markers on the corners (`4x4_50` dictionary, IDs `0`–`3`)
+- Piece images in `chesspics/` (used by the digital board — `wK.png`, `bQ.png`, and the rest of the standard set)
 
-### Python dependencies
+Install dependencies:
 
 ```bash
-pip install opencv-python numpy python-chess ai-edge-litert
+pip install opencv-python numpy python-chess ai-edge-litert pillow
 ```
 
-| Package | Role |
-|---------|------|
-| `opencv-python` | Camera capture, ArUco detection, warping, UI |
-| `numpy` | Array / geometry operations |
-| `python-chess` | Board state, legality, SAN |
-| `ai-edge-litert` | TFLite inference (`model.tflite`) |
+| Package | What it does |
+|---------|--------------|
+| `opencv-python` | Camera, ArUco detection, warping, OpenCV windows |
+| `numpy` | Geometry and array math |
+| `python-chess` | Board state, legality checks, SAN |
+| `ai-edge-litert` | Runs `model.tflite` |
+| `pillow` | Loads and resizes piece images for the digital board |
 
-## Project layout
+## Files worth knowing
 
-| File | Description |
-|------|-------------|
-| `vision_updated.py` | Main entry: camera loop, tracking, warping, keyboard controls |
-| `occupancy_colour_ml.py` | TFLite wrapper: per-square occupancy + colour |
-| `logic.py` | Game state, move detection, legality checks |
+| File | What it is |
+|------|------------|
+| `vision_updated.py` | Main app — camera loop, controls, ties everything together |
+| `digital_board.py` | Tkinter window that renders the current position |
+| `occupancy_colour_ml.py` | TFLite wrapper for per-square classification |
+| `logic.py` | Game state, move detection, legality |
 | `model.tflite` | Trained classifier (empty / black / white) |
 | `labels.txt` | Model class labels |
-| `calibration.json` | Saved board corner points (created when you freeze the board) |
+| `chesspics/` | Piece PNGs for the digital board |
+| `calibration.json` | Saved corner points (created when you freeze the board) |
 
-## Setup
+## Getting started
 
-1. Clone the repository and install dependencies (see above).
-2. Place ArUco markers `0`–`3` on the board corners so the camera can see all four.
-3. If your webcam is not index `1`, edit `CAMERA_INDEX` at the top of `vision_updated.py`.
-4. Run the application:
+1. Clone the repo and install the packages above.
+2. Put ArUco markers `0`–`3` on the board corners so the camera can see all four.
+3. If your webcam isn't device index `1`, change `CAMERA_INDEX` at the top of `vision_updated.py`.
+4. Run:
 
 ```bash
 python vision_updated.py
 ```
 
-Two windows open: **Camera** (live feed with board outline) and **Board** (warped, gridded view) once tracking succeeds.
+You'll get three windows:
+
+- **Camera** — live feed with a blue outline when the board is found
+- **Board** — warped top-down view with a grid (once tracking works)
+- **Chess Vision Digital Board** — the piece-image board, starting from the initial position and updating as you play
+
+You can also run the digital board on its own to preview the starting position:
+
+```bash
+python digital_board.py
+```
 
 ## Controls
 
-| Key | Action |
-|-----|--------|
-| **S** (Shift+S) | Start a new game from the current board snapshot |
-| **Space** | Classify the board and process a move (requires game started) |
-| **s** | Freeze board tracking and save calibration to `calibration.json` |
-| **r** | Resume live tracking |
+| Key | What it does |
+|-----|--------------|
+| **Shift+S** | Start a new game from the current board snapshot |
+| **Space** | Classify the board and try to register a move (game must be started) |
+| **s** | Freeze tracking and save calibration to `calibration.json` |
+| **r** | Turn live tracking back on |
 | **q** | Quit |
 
-**Typical workflow**
+**Typical session**
 
-1. Point the camera at the board until all four markers are detected (blue outline on **Camera**).
-2. Press **s** to freeze tracking and save calibration when the warp looks correct.
-3. Set up pieces on the physical board, then press **Shift+S** to start the game.
-4. After each physical move, press **Space** to register it. Legal moves print as `[MOVE] e4`; illegal ones as `[ILLEGAL]`.
+1. Point the camera at the board until all four markers show up (blue outline on **Camera**).
+2. Press **s** when the warped **Board** view looks aligned — this saves calibration and stops the warp from drifting.
+3. Set up the pieces, then **Shift+S** to start the game. The digital board snaps to match.
+4. Make a move on the real board, press **Space**, and check the terminal for `[MOVE] e4` (or `[ILLEGAL]` if something went wrong). The digital board updates on successful moves.
 
-If you press **Space** before starting a game, you will see `[ERROR] Press Shift+S first`.
+If you hit Space before starting a game, you'll see `[ERROR] Press Shift+S first`.
 
 ## ArUco marker layout
 
-Markers use OpenCV’s `DICT_4X4_50` with IDs `0`–`3`. Each marker contributes one **inner** corner to the board quadrilateral:
+Markers use OpenCV's `DICT_4X4_50` with IDs `0`–`3`. Each marker's **inner** corner pins one board corner:
 
-| Marker ID | Corner used |
-|-----------|-------------|
+| Marker ID | Corner |
+|-----------|--------|
 | 0 | Bottom-right |
 | 1 | Bottom-left |
 | 2 | Top-left |
 | 3 | Top-right |
 
-All four must be visible at least once before warping works; after freezing (**s**), tracking can stay off while you play.
+All four need to be visible at least once before warping works. After you freeze with **s**, tracking can stay off while you play.
 
-## Model output
+## What the model actually sees
 
 Per square, the classifier returns:
 
-- `state`: `"empty"`, `"black"`, or `"white"`
-- `confidence`: normalized score from the model output
-- `empty_score`, `black_score`, `white_score`: raw class scores
+- `state` — `"empty"`, `"black"`, or `"white"`
+- `confidence` — normalized score
+- `empty_score`, `black_score`, `white_score` — raw class scores
 
-The logic layer only uses occupancy transitions (`empty` ↔ piece) to infer moves; piece **types** (pawn, knight, etc.) are tracked internally via `STARTING_PIECES` in `logic.py` for SAN generation, not from vision.
+Vision only tells us *whether* a square has a white piece, a black piece, or nothing. Piece *types* (pawn vs knight, etc.) come from the internal game state in `logic.py`, seeded from `STARTING_PIECES` — not from the camera.
 
-## Troubleshooting
+## When things go wrong
 
-- **No Board window** — Ensure all four ArUco markers are in view and IDs match `0`–`3`.
-- **Wrong camera** — Change `CAMERA_INDEX` in `vision_updated.py`.
-- **Warp drift** — Press **s** again to re-freeze and overwrite `calibration.json`.
-- **No move detected** — Make sure at least two squares changed between snapshots; only lift/place one move at a time before pressing **Space**.
-- **Illegal move** — The vision snapshot may be wrong; check lighting, piece colour contrast, and that the warped grid aligns with squares.
-
-## License
-
-Add a license file if you plan to distribute this project.
+- **No Board window** — All four ArUco markers need to be in view, with the right IDs (`0`–`3`).
+- **Digital board missing pieces** — Check that the PNGs exist in `chesspics/` (e.g. `wK.png`, `bP.png`).
+- **Wrong camera** — Tweak `CAMERA_INDEX` in `vision_updated.py`.
+- **Warp drifts** — Press **s** again to re-freeze and overwrite `calibration.json`.
+- **Move not detected** — Only change one move at a time before Space; at least two squares need to differ between snapshots.
+- **Illegal move** — Lighting, piece contrast, or a misaligned grid can confuse the classifier. Glance at the digital board to see what the system thinks is on the board.
