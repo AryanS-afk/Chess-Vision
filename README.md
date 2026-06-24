@@ -14,7 +14,7 @@ flowchart LR
     ArUco --> Warp[Perspective warp]
     Warp --> Split[64 square crops]
     Split --> ML[TFLite classifier]
-    ML --> Logic[LogicEngine / python-chess]
+    ML --> Logic[LogicEngine]
     Logic --> GUI[Digital board]
 ```
 
